@@ -33,39 +33,60 @@ def connect_google():
 
 # --- HELPER: SMART EXCEL READER ---
 def smart_read_monthly(file_content):
-    """Same smart logic as before to handle your specific Excel format"""
+    """
+    Reads Excel and handles 2-row headers (Main Header + Sub Header).
+    Example: 'April 2025' (Row 5) + 'Generation' (Row 6) -> 'April 2025 - Generation'
+    """
+    # 1. Read first 20 rows to find where the table starts
     df_raw = pd.read_excel(io.BytesIO(file_content), header=None, nrows=20)
     
-    header_row_idx = -1
+    # 2. Find the row containing "Sr. No" or "Sr.No"
+    header_idx = -1
     for idx, row in df_raw.iterrows():
         row_str = row.astype(str).str.lower().values
-        if any("sr.no" in s for s in row_str):
-            header_row_idx = idx
+        if any("sr.no" in s or "sr. no" in s for s in row_str):
+            header_idx = idx
             break
             
-    if header_row_idx == -1: return None
+    if header_idx == -1: return None
 
-    dates = df_raw.iloc[header_row_idx - 1] if header_row_idx > 0 else []
-    metrics = df_raw.iloc[header_row_idx + 1]
+    # 3. Read the file again, capturing both the Header Row and the Sub-Header Row
+    # We read from header_idx (Row 1) and header_idx+1 (Row 2)
+    df = pd.read_excel(io.BytesIO(file_content), header=[header_idx, header_idx+1])
     
-    df_data = pd.read_excel(io.BytesIO(file_content), header=header_row_idx)
-    df_data = df_data.iloc[1:]
+    # 4. Flatten the 2-level columns into 1 level
+    new_columns = []
     
-    raw_columns = []
-    current_date = "Info"
-    for i in range(len(df_data.columns)):
-        col_name = str(df_data.columns[i]).strip()
-        if i < 7: 
-            raw_columns.append(col_name)
-            continue
-        if i < len(dates):
-            val = str(dates[i])
-            if '20' in val: current_date = val.split(" ")[0]
-        metric_val = str(metrics[i]) if i < len(metrics) else ""
-        if metric_val != 'nan' and metric_val.strip():
-            raw_columns.append(f"{current_date} - {metric_val}")
+    for col in df.columns:
+        # col is a tuple: ('April 2025', 'Generation') or ('Name of Project', 'Unnamed: 1_level_1')
+        top_val = str(col[0]).strip()
+        sub_val = str(col[1]).strip()
+        
+        # Clean up "Unnamed" or "nan"
+        if "Unnamed" in top_val or top_val == "nan": top_val = ""
+        if "Unnamed" in sub_val or sub_val == "nan": sub_val = ""
+        
+        # Merge logic
+        if top_val and sub_val:
+            new_columns.append(f"{top_val} - {sub_val}")
+        elif top_val:
+            new_columns.append(top_val)
+        elif sub_val:
+            new_columns.append(sub_val)
         else:
-            raw_columns.append(f"{current_date} - {col_name}")
+            new_columns.append("Column_" + str(len(new_columns)))
+
+    df.columns = new_columns
+    
+    # 5. Drop the first row if it's empty (artifact of double header)
+    df = df.iloc[0:] 
+    
+    # 6. Remove rows where 'Sr. No' is empty or not a number
+    # (Find the column that looks like Sr No)
+    sr_col = next((c for c in df.columns if "Sr" in c and "No" in c), df.columns[0])
+    df = df[pd.to_numeric(df[sr_col], errors='coerce').notnull()]
+
+    return df
 
     # Deduplicate columns
     counts = {}
