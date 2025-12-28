@@ -1,6 +1,9 @@
 fastapi
 uvicorn
 pandas
-openpyxl
-python-multipart
+gspread
+oauth2client
+gspread-dataframe
 xlsxwriter
+python-multipart
+openpyxl
