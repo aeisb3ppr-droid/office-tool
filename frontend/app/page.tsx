@@ -18,14 +18,14 @@ export default function Home() {
 const [stats, setStats] = useState({ total_projects: 0, total_capacity: 0, latest_month: '-', latest_payment: 0 });
   const fetchData = async () => {
     try {
-      const pRes = await axios.get("http://localhost:8000/projects");
+      const pRes = await axios.get("https://office-backend-w8nc.onrender.com/projects");
       setProjects(pRes.data.data);
       
-      const cRes = await axios.get("http://localhost:8000/columns");
+      const cRes = await axios.get("https://office-backend-w8nc.onrender.com/columns");
       setColumns(cRes.data.columns);
 
       // NEW: Fetch Stats
-      const sRes = await axios.get("http://localhost:8000/stats");
+      const sRes = await axios.get("https://office-backend-w8nc.onrender.com/stats");
       if (!sRes.data.error) {
         setStats(sRes.data);
       }
@@ -46,7 +46,7 @@ const [stats, setStats] = useState({ total_projects: 0, total_capacity: 0, lates
 
     try {
       const endpoint = type === 'master' ? 'upload-master' : 'append-data';
-      await axios.post(`http://localhost:8000/${endpoint}`, formData);
+      await axios.post(`https://office-backend-w8nc.onrender.com/${endpoint}`, formData);
       
       setStatus(`✅ ${type === 'master' ? 'Master Info' : 'Monthly Data'} Synced with Google!`);
       // Refresh local data to show changes immediately
@@ -62,7 +62,7 @@ const [stats, setStats] = useState({ total_projects: 0, total_capacity: 0, lates
     setLoading(true);
     setStatus("Generating Report from Google Data...");
     try {
-      const res = await axios.post("http://localhost:8000/generate-report", selectedCols, { responseType: 'blob' });
+      const res = await axios.post("https://office-backend-w8nc.onrender.com/generate-report", selectedCols, { responseType: 'blob' });
       const url = window.URL.createObjectURL(new Blob([res.data]));
       const link = document.createElement('a');
       link.href = url;
