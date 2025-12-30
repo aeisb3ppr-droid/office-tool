@@ -1,6 +1,7 @@
+import json
+from google.oauth2.service_account import Credentials
 import pandas as pd
 import gspread
-from oauth2client.service_account import ServiceAccountCredentials
 from gspread_dataframe import set_with_dataframe
 from fastapi import FastAPI, UploadFile, File, Body
 from fastapi.responses import StreamingResponse
@@ -24,9 +25,25 @@ app.add_middleware(
 )
 
 # --- GOOGLE CONNECTION ---
+# --- GOOGLE CONNECTION ---
 def connect_google():
-    scope = ["https://spreadsheets.google.com/feeds", "https://www.googleapis.com/auth/drive"]
-    creds = ServiceAccountCredentials.from_json_keyfile_name(CREDENTIALS_FILE, scope)
+    scopes = [
+        "https://www.googleapis.com/auth/spreadsheets",
+        "https://www.googleapis.com/auth/drive"
+    ]
+    
+    # Priority 1: Try to load from Environment Variable (Best for Render/Production)
+    if "GOOGLE_CREDENTIALS_JSON" in os.environ:
+        creds_dict = json.loads(os.environ["GOOGLE_CREDENTIALS_JSON"])
+        creds = Credentials.from_service_account_info(creds_dict, scopes=scopes)
+    
+    # Priority 2: Try to load from local file (Best for Local Development)
+    elif os.path.exists(CREDENTIALS_FILE):
+        creds = Credentials.from_service_account_file(CREDENTIALS_FILE, scopes=scopes)
+    
+    else:
+        raise Exception("No Google Credentials found! Set GOOGLE_CREDENTIALS_JSON or add credentials.json")
+
     client = gspread.authorize(creds)
     sheet = client.open(SHEET_NAME)
     return sheet

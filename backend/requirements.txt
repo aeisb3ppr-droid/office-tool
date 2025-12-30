@@ -2,7 +2,9 @@ fastapi
 uvicorn
 pandas
 gspread
-oauth2client
+google-auth
+google-auth-oauthlib
+google-auth-httplib2
 gspread-dataframe
 xlsxwriter
 python-multipart
