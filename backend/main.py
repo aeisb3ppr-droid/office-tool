@@ -75,8 +75,17 @@ def smart_read_monthly(file_content):
     new_columns = []
     
     for col in df.columns:
-        # col is a tuple: ('April 2025', 'Generation') or ('Name of Project', 'Unnamed: 1_level_1')
-        top_val = str(col[0]).strip()
+        # col is a tuple: ('April 2025', 'Generation')
+        raw_top = col[0]
+        
+        # --- NEW FIX: Handle Dates Gracefully ---
+        if isinstance(raw_top, pd.Timestamp):
+            # Formats date as "April-25" (Full Month - Year)
+            top_val = raw_top.strftime('%B-%y') 
+        else:
+            top_val = str(raw_top).strip()
+        # ----------------------------------------
+
         sub_val = str(col[1]).strip()
         
         # Clean up "Unnamed" or "nan"
