@@ -75,35 +75,47 @@ def get_stats():
     try:
         ws = connect_google()
         df = pd.DataFrame(ws.get_all_records())
+
+        if df.empty:
+            return {"total_projects": 0, "total_capacity": 0, "latest_month": "N/A", "latest_payment": 0}
         
-        # 1. Total Projects
-        total_projects = len(df)
+        # 1. Total Projects (Counting entries in 'Plant Type' column)
+        plant_col = next((c for c in df.columns if "plant type" in c.lower()), None)
+        total_projects = 0
+
+    if plant_col:
+    # .dropna() removes empty cells
+    # .astype(str).str.strip() ensures we don't count cells that just have spaces
+    valid_projects = df[plant_col].replace('', pd.NA).dropna()
+    total_projects = len(valid_projects)
+else:
+    # Fallback if the column name changes slightly
+    total_projects = len(df)
         
         # 2. Total Capacity (Finds any column with 'Capacity' or 'MW')
         cap_col = next((c for c in df.columns if "capacity" in c.lower() or "mw" in c.lower()), None)
         total_capacity = 0
         if cap_col:
             total_capacity = pd.to_numeric(df[cap_col], errors='coerce').sum()
-
-        # 3. Latest Payment (Finds the LAST column with 'Payment' in name)
-        payment_cols = [c for c in df.columns if "Payment" in c]
-        latest_payment = 0
-        latest_month = "N/A"
         
-        if payment_cols:
-            latest_col = payment_cols[-1] # Assume right-most payment column is latest
-            latest_payment = pd.to_numeric(df[latest_col], errors='coerce').sum()
-            
-            # Try to extract month name from column (e.g., "April-25 Payment" -> "April-25")
-            # We split by space or hyphen to guess the date part
-            latest_month = latest_col.replace("Payment", "").strip(" -_")
+        # 3. Monthly Payments Logic
+        payment_cols = [c for c in df.columns if "payment" in c.lower()]
+
+        # Create a dictionary of { "Month Name": Total_Sum }
+        monthly_data = {}
+        for col in payment_cols:
+            # Clean the name (e.g., "April-25 Payment" -> "April-25")
+            display_name = col.lower().replace("payment", "").strip(" -_").title()
+            total_for_month = pd.to_numeric(df[col], errors='coerce').fillna(0).sum()
+            monthly_data[display_name] = round(float(total_for_month), 2)
 
         return {
-            "total_projects": total_projects,
+            "total_projects": int(total_projects),
             "total_capacity": round(total_capacity, 2),
-            "latest_month": latest_month,
-            "latest_payment": round(latest_payment, 2)
+            "monthly_payments": monthly_data,  # Now returns ALL months
+            "available_months": list(monthly_data.keys()) # For your dropdown list
         }
+
     except Exception as e:
         return {"error": str(e)}
 

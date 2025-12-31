@@ -10,7 +10,14 @@ export default function Home() {
   const [searchTerm, setSearchTerm] = useState("");
   const [status, setStatus] = useState("");
   const [loading, setLoading] = useState(false);
-  const [stats, setStats] = useState({ total_projects: 0, total_capacity: 0, latest_month: '-', latest_payment: 0 });
+  const [stats, setStats] = useState<any>({ 
+    total_projects: 0, 
+    total_capacity: 0, 
+    monthly_payments: {}, 
+    available_months: [] 
+  });
+
+  const [selectedMonth, setSelectedMonth] = useState("");
 
   // Use Env Var for URL or fallback to Render
   const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL || "https://office-backend-w8nc.onrender.com";
@@ -30,7 +37,9 @@ export default function Home() {
 
       const sRes = await axios.get(`${API_BASE_URL}/stats`);
       if (!sRes.data.error) {
-        setStats(sRes.data);
+        if (sRes.data.available_months && sRes.data.available_months.length > 0) {
+          setSelectedMonth(sRes.data.available_months[sRes.data.available_months.length - 1]);
+        }
       }
     } catch (e) {
       console.error("Server error");
@@ -85,27 +94,47 @@ export default function Home() {
           </div>
         )}
 
-        {/* TAB 1: DASHBOARD */}
         {activeTab === 'dashboard' && (
           <div>
             <div className="grid grid-cols-1 md:grid-cols-4 gap-6 mb-8">
+              {/* Total Projects Card */}
               <div className="bg-white p-6 rounded-xl shadow border-l-4 border-blue-500">
                 <h3 className="text-gray-500 text-sm font-bold uppercase">Total Projects</h3>
                 <p className="text-3xl font-bold text-gray-800">{stats.total_projects}</p>
               </div>
+
+              {/* Total Capacity Card */}
               <div className="bg-white p-6 rounded-xl shadow border-l-4 border-purple-500">
                 <h3 className="text-gray-500 text-sm font-bold uppercase">Total Capacity</h3>
                 <p className="text-3xl font-bold text-gray-800">{stats.total_capacity} <span className="text-sm text-gray-400">MW</span></p>
               </div>
-              <div className="bg-white p-6 rounded-xl shadow border-l-4 border-green-500">
-                <h3 className="text-gray-500 text-sm font-bold uppercase">Latest Month</h3>
-                <p className="text-xl font-bold text-gray-800">{stats.latest_month}</p>
-              </div>
-              <div className="bg-white p-6 rounded-xl shadow border-l-4 border-orange-500">
-                <h3 className="text-gray-500 text-sm font-bold uppercase">Total Payment</h3>
-                <p className="text-3xl font-bold text-gray-800">
-                  ₹{(stats.latest_payment / 10000000).toFixed(2)} <span className="text-sm text-gray-400">Cr</span>
-                </p>
+
+              {/* NEW: Payment Card with Dropdown */}
+              <div className="bg-white p-6 rounded-xl shadow border-l-4 border-orange-500 md:col-span-2">
+                <div className="flex justify-between items-start mb-2">
+                  <h3 className="text-gray-500 text-sm font-bold uppercase">Monthly Payment</h3>
+                  
+                  {/* THE DROPDOWN */}
+                  <select 
+                    value={selectedMonth} 
+                    onChange={(e) => setSelectedMonth(e.target.value)}
+                    className="text-xs border rounded p-1 bg-gray-50 outline-none focus:ring-2 focus:ring-orange-300"
+                  >
+                    {stats.available_months.map((m: string) => (
+                      <option key={m} value={m}>{m}</option>
+                    ))}
+                  </select>
+                </div>
+
+                <div className="flex items-baseline space-x-2">
+                  <p className="text-3xl font-bold text-gray-800">
+                    ₹{((stats.monthly_payments[selectedMonth] || 0) / 10000000).toFixed(2)} 
+                    <span className="text-sm text-gray-400 ml-1">Cr</span>
+                  </p>
+                  <p className="text-sm text-orange-600 font-medium italic">
+                    for {selectedMonth || 'Select Month'}
+                  </p>
+                </div>
               </div>
             </div>
 
