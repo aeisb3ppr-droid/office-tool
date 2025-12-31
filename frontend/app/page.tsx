@@ -139,7 +139,7 @@ export default function Home() {
             <h1 className="text-3xl font-extrabold text-white tracking-widest">PSPCL</h1>
             <p className="text-blue-200 text-xs mt-1 uppercase tracking-wider">Punjab State Power Corporation Ltd.</p>
             <div className="mt-4 inline-block px-4 py-1 rounded-full bg-blue-900/40 border border-blue-400/30 text-blue-100 text-[10px] font-bold uppercase tracking-wide">
-              Department of Power Purchase
+              Power Purchase & Regulation
             </div>
           </div>
 
