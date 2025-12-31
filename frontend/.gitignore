@@ -45,6 +45,7 @@ node_modules/
 __pycache__/
 venv/
 .env
+credentials.json
 
 # Ignore system files
 .DS_Store
