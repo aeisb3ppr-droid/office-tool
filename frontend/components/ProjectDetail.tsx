@@ -13,6 +13,20 @@ export default function ProjectDetail({ project, onBack }: Props) {
   const mainTitle = String(values[0] || "Project Details");
   const categoryTag = String(values[1] || "Info");
 
+  // --- FILTERING LOGIC STARTS HERE ---
+  const allEntries = Object.entries(project);
+  const cutoffKey = "Current Tariff Rate (Rs./kWh)";
+
+  // Find the index of the cutoff key
+  const cutoffIndex = allEntries.findIndex(([key]) => key.trim() === cutoffKey);
+
+  // If the key is found, slice the array to include everything up to and including that key.
+  // If not found, it falls back to showing all entries.
+  const displayedEntries = cutoffIndex !== -1 
+    ? allEntries.slice(0, cutoffIndex + 1) 
+    : allEntries;
+  // --- FILTERING LOGIC ENDS HERE ---
+
   return (
     <div className="animate-fade-in-up max-w-4xl mx-auto">
        <button onClick={onBack} className="flex items-center text-sm text-gray-500 hover:text-blue-600 mb-4 transition">
@@ -28,7 +42,7 @@ export default function ProjectDetail({ project, onBack }: Props) {
          </div>
          
          <div className="p-8 grid grid-cols-1 md:grid-cols-2 gap-x-8 gap-y-6">
-           {Object.entries(project).map(([key, val]: any) => (
+           {displayedEntries.map(([key, val]: any) => (
              <div key={key} className="border-b border-gray-100 pb-2">
                <dt className="text-xs font-bold text-gray-400 uppercase tracking-wider mb-1">{key}</dt>
                <dd className="text-base font-medium text-slate-800 break-words">

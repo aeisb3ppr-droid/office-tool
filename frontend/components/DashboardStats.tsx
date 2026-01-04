@@ -1,10 +1,10 @@
 import { useMemo } from 'react';
 import {
-  AreaChart, Area, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer
+  AreaChart, Area, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer,
+  PieChart, Pie, Cell, Legend
 } from 'recharts';
 import { SolarIcon, PlantIcon } from './Icons';
 
-// Explicitly export the interface (good practice)
 export interface DashboardProps {
   projects: any[];
   onCategorySelect: (category: string) => void;
@@ -68,13 +68,16 @@ export default function DashboardStats({ projects, onCategorySelect, onRefresh }
       typeGroups[groupKey].installed += capVal;
       typeGroups[groupKey].contracted += conVal;
 
+      // --- FIX: Strictly match Month-Year pattern to avoid "Unknown" and double counting ---
       genCols.forEach(gCol => {
-        const match = gCol.match(/^([A-Za-z]+-\d{2})/);
-        const monthLabel = match ? match[1] : "Unknown";
-        const val = Number(p[gCol] || 0);
-        if (val > 0) {
-          monthlyGroups[monthLabel] = (monthlyGroups[monthLabel] || 0) + val;
-          totalGen += val;
+        const match = gCol.match(/^([A-Za-z]+-\d{2})/); // Looks for "Apr-25" format
+        if (match) {
+          const monthLabel = match[1];
+          const val = Number(p[gCol] || 0);
+          if (val > 0) {
+            monthlyGroups[monthLabel] = (monthlyGroups[monthLabel] || 0) + val;
+            totalGen += val;
+          }
         }
       });
     });
@@ -91,7 +94,7 @@ export default function DashboardStats({ projects, onCategorySelect, onRefresh }
     const lineData = Object.entries(monthlyGroups)
       .map(([name, value]) => ({ 
         name, 
-        val: Number((value / 1000000).toFixed(2)) 
+        val: Number((value / 1000000).toFixed(2)) // Convert to MU
       }))
       .sort((a, b) => {
          const m1 = a.name.substring(0, 3);
@@ -107,6 +110,12 @@ export default function DashboardStats({ projects, onCategorySelect, onRefresh }
       lineData
     };
   }, [projects]);
+
+  // Colors for Pie Chart
+  const COLORS = {
+    solar: '#f97316', // Orange
+    other: '#3b82f6'  // Blue
+  };
 
   return (
     <div className="animate-fade-in-up space-y-8">
@@ -179,35 +188,77 @@ export default function DashboardStats({ projects, onCategorySelect, onRefresh }
         </div>
       </div>
 
-       {/* CHART */}
-       {stats.lineData.length > 0 && (
-         <div className="bg-white p-6 rounded-xl border border-gray-200 shadow-sm">
-            <div className="flex justify-between items-center mb-6">
-               <h3 className="text-lg font-bold text-slate-800">Net Generation Trend (MU)</h3>
-               <div className="text-right">
-                  <p className="text-xs text-gray-400 uppercase">Total YTD Gen</p>
-                  <p className="text-lg font-bold text-green-600">{(stats.totalGen / 1000000).toFixed(2)} MU</p>
-               </div>
+       {/* CHARTS SECTION (Grid Layout) */}
+       <div className="grid grid-cols-1 lg:grid-cols-2 gap-8">
+         
+         {/* 1. Generation Trend Chart (Area) */}
+         {stats.lineData.length > 0 && (
+           <div className="bg-white p-6 rounded-xl border border-gray-200 shadow-sm flex flex-col">
+              <div className="flex justify-between items-center mb-6">
+                 <h3 className="text-lg font-bold text-slate-800">Net Generation Trend</h3>
+                 <div className="text-right">
+                    <p className="text-xs text-gray-400 uppercase">Total YTD Gen</p>
+                    <p className="text-lg font-bold text-green-600">{(stats.totalGen / 1000000).toFixed(2)} MU</p>
+                 </div>
+              </div>
+              <div className="flex-1 min-h-[300px] w-full">
+                <ResponsiveContainer width="100%" height="100%">
+                  <AreaChart data={stats.lineData}>
+                    <defs>
+                      <linearGradient id="colorVal" x1="0" y1="0" x2="0" y2="1">
+                        <stop offset="5%" stopColor="#10b981" stopOpacity={0.1}/>
+                        <stop offset="95%" stopColor="#10b981" stopOpacity={0}/>
+                      </linearGradient>
+                    </defs>
+                    <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#f1f5f9" />
+                    <XAxis dataKey="name" axisLine={false} tickLine={false} tick={{ fill: '#64748b', fontSize: 12 }} />
+                    <YAxis axisLine={false} tickLine={false} tick={{ fill: '#64748b', fontSize: 12 }} />
+                    <Tooltip contentStyle={{ borderRadius: '8px', border: 'none', boxShadow: '0 4px 6px -1px rgb(0 0 0 / 0.1)' }} />
+                    <Area type="monotone" dataKey="val" stroke="#10b981" fillOpacity={1} fill="url(#colorVal)" strokeWidth={3} />
+                  </AreaChart>
+                </ResponsiveContainer>
+              </div>
+           </div>
+         )}
+
+         {/* 2. Capacity Mix Chart (Pie) */}
+         {stats.groups.length > 0 && (
+            <div className="bg-white p-6 rounded-xl border border-gray-200 shadow-sm flex flex-col">
+              <h3 className="text-lg font-bold text-slate-800 mb-2">Installed Capacity Mix</h3>
+              <p className="text-sm text-slate-400 mb-4">Share of total capacity by source type.</p>
+              
+              <div className="flex-1 min-h-[300px] w-full">
+                <ResponsiveContainer width="100%" height="100%">
+                  <PieChart>
+                    <Pie
+                      data={stats.groups}
+                      cx="50%"
+                      cy="50%"
+                      innerRadius={60} // Donut style
+                      outerRadius={100}
+                      paddingAngle={3}
+                      dataKey="installed"
+                    >
+                      {stats.groups.map((entry: any, index: number) => (
+                        <Cell 
+                          key={`cell-${index}`} 
+                          fill={entry.name.toLowerCase().includes('solar') ? COLORS.solar : COLORS.other} 
+                        />
+                      ))}
+                    </Pie>
+                    <Tooltip 
+  // CHANGE: Allow 'value' to be 'any' or 'number | undefined' to satisfy TypeScript
+  formatter={(value: any) => [`${Number(value).toLocaleString()} MW`, 'Capacity']}
+  contentStyle={{ borderRadius: '8px', border: 'none', boxShadow: '0 4px 6px -1px rgb(0 0 0 / 0.1)' }}
+/>
+                    <Legend verticalAlign="bottom" height={36} iconType="circle"/>
+                  </PieChart>
+                </ResponsiveContainer>
+              </div>
             </div>
-            <div className="h-64 w-full">
-              <ResponsiveContainer width="100%" height="100%">
-                <AreaChart data={stats.lineData}>
-                  <defs>
-                    <linearGradient id="colorVal" x1="0" y1="0" x2="0" y2="1">
-                      <stop offset="5%" stopColor="#10b981" stopOpacity={0.1}/>
-                      <stop offset="95%" stopColor="#10b981" stopOpacity={0}/>
-                    </linearGradient>
-                  </defs>
-                  <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#f1f5f9" />
-                  <XAxis dataKey="name" axisLine={false} tickLine={false} tick={{ fill: '#64748b', fontSize: 12 }} />
-                  <YAxis axisLine={false} tickLine={false} tick={{ fill: '#64748b', fontSize: 12 }} />
-                  <Tooltip contentStyle={{ borderRadius: '8px', border: 'none', boxShadow: '0 4px 6px -1px rgb(0 0 0 / 0.1)' }} />
-                  <Area type="monotone" dataKey="val" stroke="#10b981" fillOpacity={1} fill="url(#colorVal)" strokeWidth={3} />
-                </AreaChart>
-              </ResponsiveContainer>
-            </div>
-         </div>
-       )}
+         )}
+
+       </div>
     </div>
   );
 }
