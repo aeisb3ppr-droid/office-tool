@@ -8,7 +8,7 @@ from google.oauth2.service_account import Credentials
 from fastapi import FastAPI, Body, HTTPException
 from fastapi.responses import StreamingResponse
 from fastapi.middleware.cors import CORSMiddleware
-from typing import List
+from typing import List, Optional, Any, Dict
 from pydantic import BaseModel
 
 # --- CONFIGURATION ---
@@ -16,7 +16,7 @@ BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 CREDENTIALS_FILE = os.path.join(BASE_DIR, "credentials.json")
 SHEET_NAME = "Office Data System" 
 WORKSHEET_NAME = "Project_Data" # Main Data Tab
-EMPLOYEE_SHEET_NAME = "Employees" # New Tab for Auth
+EMPLOYEE_SHEET_NAME = "Employees" # Auth Tab
 
 # --- CACHE SETTINGS ---
 CACHE_DURATION = 300  # 5 Minutes
@@ -32,16 +32,31 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+# --- MODELS ---
+
 class ReadingInput(BaseModel):
     project_name: str
-    date: str  # Format: YYYY-MM-DD
+    date: str 
     current_export: float
     current_import: float
-    remarks: str = ""
+    # Extra Fields
+    power_factor: Optional[str] = ""
+    invoice_no: Optional[str] = ""
+    invoice_date: Optional[str] = ""
+    submission_date: Optional[str] = ""
+    verify_date: Optional[str] = ""
+    remarks: Optional[str] = ""
+
+class UpdateRowInput(BaseModel):
+    project_name: str
+    month_date: str  # The unique identifier for the row (Date/Month column)
+    updated_data: Dict[str, Any] # Map of Header Name -> New Value
 
 ReadingInput.model_rebuild()
+UpdateRowInput.model_rebuild()
 
-# --- GOOGLE CONNECTION HELPERS ---
+# --- HELPERS ---
+
 def get_gspread_client():
     """Authenticates and returns the gspread client."""
     scopes = ["https://www.googleapis.com/auth/spreadsheets", "https://www.googleapis.com/auth/drive"]
@@ -56,16 +71,8 @@ def get_gspread_client():
 
     return gspread.authorize(creds)
 
-def clean_header(h1, h2):
-    """Merges double headers (Export + KWH -> Export - KWH)"""
-    h1 = str(h1).strip().upper()
-    h2 = str(h2).strip().upper()
-    if h1 and h2: return f"{h1} - {h2}"
-    if h2: return h2
-    return h1
-
 def get_cached_data():
-    """Fetches Project Data with caching to prevent rate limiting."""
+    """Fetches Project List with caching."""
     global cached_df, last_fetch_time
     
     current_time = time.time()
@@ -86,73 +93,50 @@ def get_cached_data():
             raise e
     return cached_df
 
-# --- NEW ENDPOINT: EMPLOYEE VERIFICATION ---
+def find_worksheet(sheet, project_name):
+    """Smart matching helper to find a worksheet."""
+    worksheets = sheet.worksheets()
+    target = project_name.strip().lower()
+    
+    # 1. Exact Match
+    ws = next((w for w in worksheets if w.title.strip().lower() == target), None)
+    
+    # 2. Partial Match
+    if not ws:
+        ws = next((w for w in worksheets if target in w.title.strip().lower() or w.title.strip().lower() in target), None)
+        
+    return ws
+
+# --- ENDPOINTS ---
+
 @app.get("/verify-employee/{emp_id}")
 def verify_employee(emp_id: str):
     try:
-        print(f"--- VERIFYING ID: {emp_id} ---") # Debug print
-        
-        # 1. Connect to Google Sheets
         client = get_gspread_client()
         sheet = client.open(SHEET_NAME)
+        ws = sheet.worksheet(EMPLOYEE_SHEET_NAME)
         
-        # 2. Check if 'Employees' tab exists
-        try:
-            ws = sheet.worksheet(EMPLOYEE_SHEET_NAME)
-        except gspread.WorksheetNotFound:
-            print(f"CRITICAL ERROR: Tab '{EMPLOYEE_SHEET_NAME}' not found in Google Sheet!")
-            return {"allowed": False, "error": f"Tab '{EMPLOYEE_SHEET_NAME}' is missing. Please create it."}
-
-        # 3. Get IDs
-        valid_ids = ws.col_values(1)
-        print(f"Found {len(valid_ids)} IDs in whitelist.") # Debug print
-
-        # 4. Check Match
+        valid_ids = [str(x).strip().upper() for x in ws.col_values(1)]
         clean_input = str(emp_id).strip().upper()
-        clean_list = [str(x).strip().upper() for x in valid_ids]
 
-        if clean_input in clean_list:
+        if clean_input in valid_ids:
             return {"allowed": True}
         else:
-            print(f"ID {clean_input} NOT found in list.")
-            return {"allowed": False, "error": "You are not authorized to register"}
-
+            return {"allowed": False, "error": "Unauthorized ID"}
     except Exception as e:
-        print(f"CRITICAL SERVER ERROR: {e}") # This will show in your terminal
         return {"allowed": False, "error": str(e)}
-
-# --- CORE ENDPOINTS ---
 
 @app.get("/history/{project_name}")
 def get_project_history(project_name: str):
-    """Fetches the raw ledger with SMART MATCHING (Exact or Partial)."""
-    print(f"\n🔍 LOOKUP REQUEST: '{project_name}'") 
+    print(f"\n🔍 LOOKUP: '{project_name}'") 
     try:
         client = get_gspread_client()
         sheet = client.open(SHEET_NAME)
-        worksheets = sheet.worksheets()
-        
-        # Target Name (from Dashboard)
-        target = project_name.strip().lower()
-        
-        # --- 1. TRY EXACT MATCH ---
-        ws = next((w for w in worksheets if w.title.strip().lower() == target), None)
-
-        # --- 2. TRY PARTIAL MATCH (If exact fails) ---
-        if not ws:
-            print(f"   ⚠️ Exact match failed. Trying partial match for '{target}'...")
-            # Check if Tab Name is inside Target OR Target is inside Tab Name
-            # e.g. Matches "Allianz" with "Allianz Power Project"
-            ws = next((w for w in worksheets if w.title.strip().lower() in target or target in w.title.strip().lower()), None)
+        ws = find_worksheet(sheet, project_name)
 
         if not ws:
-            all_titles = [w.title for w in worksheets]
-            print(f"   ❌ ERROR: Sheet not found. Available: {all_titles}")
-            return {"error": f"Sheet not found. Available tabs: {all_titles}"}
+            return {"error": "Sheet not found"}
 
-        print(f"   ✅ FOUND TAB: {ws.title}")
-        
-        # --- (Rest of the function remains the same) ---
         rows = ws.get_all_values()
         if len(rows) < 3: return {"data": []}
 
@@ -161,6 +145,7 @@ def get_project_history(project_name: str):
         headers = []
         current_group = ""
         
+        # Build Clean Headers (e.g. "EXPORT - CURRENT")
         for i, col in enumerate(h2):
             if i < len(h1) and h1[i].strip():
                 current_group = h1[i].strip()
@@ -180,88 +165,156 @@ def get_project_history(project_name: str):
                     row_dict[headers[i]] = val
             data.append(row_dict)
 
-        print(f"   🚀 Returning {len(data)} records")
         return {"data": data, "headers": headers}
 
     except Exception as e:
-        print(f"   🔥 CRITICAL ERROR: {e}")
+        print(f"ERROR: {e}")
         return {"error": str(e)}
 
 @app.post("/add-reading")
 def add_reading(payload: ReadingInput):
-    """Calculates bill based on previous row and appends new entry."""
+    """Calculates bill based on LAST VALID row and appends new entry."""
     try:
+        print(f"--- ADD READING: {payload.project_name} ---")
         client = get_gspread_client()
         sheet = client.open(SHEET_NAME)
-        ws = next((w for w in sheet.worksheets() if w.title.lower() == payload.project_name.lower()), None)
+        ws = find_worksheet(sheet, payload.project_name)
         
         if not ws:
             raise HTTPException(status_code=404, detail="Project Sheet not found")
 
-        # 1. Fetch Last Row to get Previous Readings & Constants
+        # 1. Fetch Data & Find Last Valid Row
         all_values = ws.get_all_values()
-        if len(all_values) < 3:
-             raise HTTPException(status_code=400, detail="Sheet is empty or missing headers. Cannot calculate.")
-
-        last_row = all_values[-1]
+        last_valid_row = None
         
-        # --- MAPPING INDICES BASED ON 'ALLIANZ' FORMAT ---
-        # 0: Month | 1: MF | 2: Prev Exp | 3: Curr Exp | 11: Rate
-        try:
-            mf = float(last_row[1].replace(",",""))
-            prev_export = float(last_row[3].replace(",","")) # Last Current becomes new Previous
-            prev_import = float(last_row[7].replace(",","")) 
-            rate = float(last_row[11].replace(",",""))
-        except (ValueError, IndexError):
-             raise HTTPException(status_code=400, detail="Could not read numeric data from the last row. Check sheet format.")
+        # Iterate backwards to skip "Total" rows or Notes
+        for i in range(len(all_values) - 1, 1, -1):
+            row = all_values[i]
+            if len(row) < 12: continue 
+            try:
+                # Check if MF (Index 1) is a number
+                float(str(row[1]).replace(",","")) 
+                last_valid_row = row
+                break
+            except ValueError:
+                continue
+        
+        if not last_valid_row:
+             raise HTTPException(status_code=400, detail="Could not find valid previous data (MF/Rates). Check sheet format.")
 
-        # 2. PERFORM CALCULATIONS
-        # Export Side
+        # 2. Extract Previous Data
+        try:
+            mf = float(str(last_valid_row[1]).replace(",",""))
+            # Last Current Export (Col 3) -> New Previous Export
+            prev_export = float(str(last_valid_row[3]).replace(",","")) 
+            # Last Current Import (Col 7) -> New Previous Import
+            prev_import = float(str(last_valid_row[7]).replace(",","")) 
+            rate = float(str(last_valid_row[11]).replace(",",""))
+        except Exception as e:
+             raise HTTPException(status_code=400, detail=f"Error reading numbers: {e}")
+
+        # 3. Calculate Bill
         diff_export = payload.current_export - prev_export
         kwh_export = diff_export * mf
         
-        # Import Side
         diff_import = payload.current_import - prev_import
         kwh_import = diff_import * mf
         
-        # Net
         net_export = kwh_export - kwh_import
         bill_amount = net_export * rate
         
-        # 3. PREPARE NEW ROW
-        # Format: Month, MF, PrevExp, CurrExp, DiffExp, KwhExp, PrevImp, CurrImp, DiffImp, KwhImp, NetExp, Rate, Bill
+        # 4. Prepare New Row
+        # Adjust indices if your sheet structure changes
         new_row = [
-            payload.date,             # 0: Month
-            mf,                       # 1: MF
-            prev_export,              # 2: Prev Reading (Exp)
-            payload.current_export,   # 3: Curr Reading (Exp)
-            diff_export,              # 4: Diff
-            kwh_export,               # 5: KWH
-            prev_import,              # 6: Prev Reading (Imp)
-            payload.current_import,   # 7: Curr Reading (Imp)
-            diff_import,              # 8: Diff
-            kwh_import,               # 9: KWH
-            net_export,               # 10: Net Export
-            rate,                     # 11: Rate
-            round(bill_amount),       # 12: Bill Amount
-            "", "", "",               # 13-15: Rebates/Deductions (Empty)
-            "", "", "", ""            # 16+: Metadata cols
+            payload.date,             # 0
+            mf,                       # 1
+            prev_export,              # 2
+            payload.current_export,   # 3
+            diff_export,              # 4
+            kwh_export,               # 5
+            prev_import,              # 6
+            payload.current_import,   # 7
+            diff_import,              # 8
+            kwh_import,               # 9
+            net_export,               # 10
+            rate,                     # 11
+            round(bill_amount),       # 12
+            payload.power_factor,     # 13
+            payload.invoice_no,       # 14
+            payload.invoice_date,     # 15
+            payload.submission_date,  # 16
+            payload.verify_date,      # 17
+            payload.remarks           # 18
         ]
 
-        # 4. APPEND TO GOOGLE SHEET
         ws.append_row(new_row)
         
-        # Clear Cache so Dashboard updates immediately
+        # Clear Cache
         global cached_df
         cached_df = None
         
-        return {"success": True, "message": "Reading added & Bill Calculated!", "bill_amount": bill_amount}
+        return {"success": True, "bill_amount": bill_amount}
 
+    except HTTPException as he:
+        raise he
     except Exception as e:
         print(f"Error: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
-# --- EXISTING ENDPOINTS ---
+@app.put("/update-row")
+def update_row(payload: UpdateRowInput):
+    """Updates a specific row in the history based on the Date/Month."""
+    try:
+        print(f"--- UPDATE ROW: {payload.project_name} | {payload.month_date} ---")
+        client = get_gspread_client()
+        sheet = client.open(SHEET_NAME)
+        ws = find_worksheet(sheet, payload.project_name)
+        
+        if not ws:
+            raise HTTPException(status_code=404, detail="Project Sheet not found")
+
+        # 1. Find Row Index by Date (Col A / Index 1)
+        dates = ws.col_values(1)
+        try:
+            # gspread uses 1-based indexing
+            row_index = dates.index(payload.month_date) + 1 
+        except ValueError:
+            raise HTTPException(status_code=404, detail=f"Row for date '{payload.month_date}' not found.")
+
+        # 2. Map Headers to Column Indices
+        headers_row_1 = ws.row_values(1)
+        headers_row_2 = ws.row_values(2)
+        
+        header_map = {}
+        current_group = ""
+        for i, h2 in enumerate(headers_row_2):
+            h1 = headers_row_1[i] if i < len(headers_row_1) else ""
+            if h1.strip(): current_group = h1.strip()
+            
+            clean_h2 = h2.strip()
+            # Reconstruct the key format: "GROUP - HEADER"
+            full_name = f"{current_group} - {clean_h2}" if (current_group and clean_h2 and clean_h2 != "MONTH") else (clean_h2 or f"Col_{i}")
+            header_map[full_name] = i + 1
+
+        # 3. Prepare Updates
+        cells_to_update = []
+        for key, value in payload.updated_data.items():
+            if key in header_map:
+                col_idx = header_map[key]
+                cells_to_update.append(gspread.Cell(row_index, col_idx, value))
+        
+        if cells_to_update:
+            ws.update_cells(cells_to_update)
+            global cached_df
+            cached_df = None
+            return {"success": True, "message": f"Updated {len(cells_to_update)} cells."}
+        else:
+            return {"success": False, "message": "No matching columns found to update."}
+
+    except Exception as e:
+        print(f"Update Error: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
 @app.get("/projects")
 def get_projects():
     try:
@@ -284,11 +337,11 @@ def get_stats():
         df = get_cached_data()
         if df.empty: return {"total_projects": 0, "total_capacity": 0, "monthly_payments": {}, "available_months": []}
 
-        # 1. Projects
+        # 1. Projects Count
         plant_col = next((c for c in df.columns if "plant type" in c.lower()), None)
         total_projects = len(df[df[plant_col].astype(str).str.strip() != ""]) if plant_col else len(df)
 
-        # 2. Capacity
+        # 2. Capacity Sum
         cap_col = next((c for c in df.columns if "capacity" in c.lower() or "mw" in c.lower()), None)
         total_capacity = pd.to_numeric(df[cap_col], errors='coerce').fillna(0).sum() if cap_col else 0
 
